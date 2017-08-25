@@ -24,7 +24,7 @@ trimming: true
 
 genome: ""   #A genome in Fasta format
 genome_prefix: ""  #This must contain the same thing (including the directory) as the genome entry, just without the ".fasta". ex : genome=path/to/genome/myGenome.fasta ; genome_prefix=path/to/genome/myGenome
-#Raw_Fastq: "data/Raw_reads"                             #The repertory containing the raw reads
+#Raw_Fastq: "data/Raw_reads"                             #The repertory containing the raw reads. Not implemented yet.
 bed_file: ""         #A bed file containing the positions of the targeted sequences
 
 ##########################################
@@ -65,7 +65,7 @@ software_reps:
   #samtools: ""
   #cutadapt: ""
   #bwa: ""
-  picard: "`which picard.jar`"# "`which picard.jar`"
+  picard: "`which picard.jar`" # "`which picard.jar`"
   GATK: "`which GenomeAnalysisTK.jar`" # "`which GenomeAnalysisTK.jar`"
   #depth_by_sample: ""
   #depth_by_region: ""

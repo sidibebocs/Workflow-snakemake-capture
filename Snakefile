@@ -233,7 +233,6 @@ rule GATK_raw_calling:
         "-I {input.bam} "
         "-L {config[bed_file]} "
         "--genotyping_mode DISCOVERY "
-        "{config[GATK][bed_file]} "
         "{config[GATK][option]}"
         "-o {output} "
         "> {log.error_log} "
