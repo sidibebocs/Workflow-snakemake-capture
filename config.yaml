@@ -1,0 +1,93 @@
+#This file contains all the configurations parameters used for the different tools composing the snakemake workflow.
+#The structure of this file is very important. Any missing ":" or " " " will make the workflow unusable.
+#Each tool come with parameters that are almost always used, like the trimming on quality for cutadapt. If for any reason you don't want to use these parameters, you can set very low values, like 0 for the above example.
+#For each tool is integreated an empty line. This line will be used if it is necessary to add any parameters to the workflow. For example if you wan't to look for more than one adapter in the trimming step, just fill this line with "-option_name option value  -option2_name option2_value etc...". You can add as many parameters as you wan't.
+#It is possible to force different options values in the command line by using ***. This can be usefull if different samples need different treatment.
+#
+#
+#TODO : Don't hesitate to send me a mail if you need some options that have not been included yet. (alex.soriano@laposte.net)
+#The directory of the different data is still hard-coded in the snakefile. I need to implement this for the Raw_read directory.
+#The path to different tool has only be implemented for those using Java.
+
+##########################################
+# Parameters of the analyses
+
+#If set to true, pcr duplicates will be removed from the analyses. Set to false for keeping them. default : remove_duplicates: true
+remove_duplicates: true
+
+#If set to true, the reads will be trimmed according to the parameters set below. set to false if the trimming as already be done yet.
+trimming: true
+
+
+##########################################
+# MANDATORY : Positions of important general Data
+
+genome: ""   #A genome in Fasta format
+genome_prefix: ""  #This must contain the same thing (including the directory) as the genome entry, just without the ".fasta". ex : genome=path/to/genome/myGenome.fasta ; genome_prefix=path/to/genome/myGenome
+#Raw_Fastq: "data/Raw_reads"                             #The repertory containing the raw reads
+bed_file: ""         #A bed file containing the positions of the targeted sequences
+
+##########################################
+# Parameters for the different tools used
+
+#Cutadapt is used for the read trimming step. The tool is set on paired-end mode.
+Cutadapt:
+  Quality_value: "30,30"                  #Trimming on quality. The two values must be separated by a ",". This will remove the bad quality parts of the reads
+  min_length: "35"                        #Reads with a length above this value will be deleted
+  forward_adapter: "CACATATCTAGCCTTC"     #Forward adapter to look for
+  reverse_adapter: "CACATATCTAGCCTTC"     #Reverse adapter to look for
+  options: ""                             #This parameter can be used to add any parameter that you wan't to use.
+                                          #Look for multiple forward adapters with multiple -b statements
+
+#BWA is used for the mapping step.
+BWA:
+  t: "20"                                   #Number of thread used for the mapping step. This will slightly reduce the running time.
+  options: ""                               #Any parameter that you would like to add to the raw_mapping step.
+
+#GATK is used for the variant calling.
+GATK:
+  #  bed_file: ""                             #A bed file used for the variant calling. must be set as followed : "-L PATH_TO_BED". If you use no bed, just let the field empty. This options will slighly decrease the calling step running time.
+  ploidy: "2"                                 #The degree of ploidy of the analysed samples.
+  option: ""
+
+##########################################
+# Name of the repertory used for the output of the different steps.
+
+  #output_Reps:
+  #trimmed: "trimmed_reads"
+  #BWA_raw: "mapped_bam"
+  #picard_sorted: "sorted_bam"
+  #picard_rmdup: "rmduped_bam"
+  #GATK: "Raw_calling"                     #The directory for the raw unmerged g.vcf files.
+
+#Here are indicated the path to the different tools used in the workflow. It's not an obligation to indicate the full in many cases. Only used for Java tools, for now.
+software_reps:
+  #samtools: ""
+  #cutadapt: ""
+  #bwa: ""
+  picard: "`which picard.jar`"# "`which picard.jar`"
+  GATK: "`which GenomeAnalysisTK.jar`" # "`which GenomeAnalysisTK.jar`"
+  #depth_by_sample: ""
+  #depth_by_region: ""
+  #mapping_data: ""
+
+##########################################
+# Graphs
+
+#Here will be stored all the informations related to graphs. The path are mandatory.
+
+depth_by_region:
+  path: "Graphs/depth_analyses_by_region.pl"
+  interval_size: "4"
+  number_of_interval: "5"
+  sorting_col: "1"
+  output_bad_coverage: "true"
+
+depth_by_sample:
+  path: "Graphs/depth_analyses_by_sample.pl"
+  interval_size: "4"
+  number_of_interval: "5"
+  sorting_col: "1"
+
+mapping_trimming_stats:
+  path: "Graphs/statistical_analyses_bam_files.pl"
