@@ -2,15 +2,17 @@ configfile: "config.yaml"
 
 from snakemake.utils import min_version
 import os
-#from os.path import join
-#import glob
+from os.path import sep
 
 min_version("3.6.0")
 
 #### Functions
 
 #Here we are collecting the ids of the different sample. the pattern is : xxx_R1_001.fastq.gz. Files MUST be named this way. it will be usefull for the variant calling step, when all of these file will be merged to one file. Without this, snakemake won't be able to do it.
-sample_ids, = glob_wildcards("data/Raw_reads/{sample}_R1_001.fastq.gz")
+def joins(*path_list):
+    return sep.join(path_list)
+
+sample_ids,suffixes, = glob_wildcards(joins(config["Raw_Fastq"],"/{sample}_R1{suff}fastq.gz"))
 
 #### Main worwflow rule. Each rule able to run specific parts of the workflow with ease. just launch snakemake with a rule as a paramater in order to produce each of the output files associated. ex : snakemake calling_only
 
@@ -72,13 +74,43 @@ onerror:
 #### Workflow
 
 #Trimming step, can be set to Off in the config file.
+#rule cutadapt:
+#    input:
+       #read=expand(joins(config["Raw_Fastq"],"/{sample}_R1{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes),
+       #read2=expand(joins(config["Raw_Fastq"],"/{sample}_R2{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes)
+#    output:
+#        R1=temp(expand("trimmed_reads/{sample}_R1{suff}fastq.gz",zip, sample=sample_ids,suff=suffixes)),
+#        R2=temp(expand("trimmed_reads/{sample}_R2{suff}fastq.gz",zip, sample=sample_ids,suff=suffixes))
+#    threads:
+#        50
+#    message:
+#        "Cutadapt on {input}..."
+#    priority:
+#        20
+#    log:
+#        expand("logs/trimming/{sample}.log", sample=sample_ids)
+#    run:
+#        for samp,e in enumerate(input.read):
+#            shell("cutadapt -q {config[Cutadapt][Quality_value]} -m {config[Cutadapt][min_length]} -a {config[Cutadapt][forward_adapter]} -A  {config[Cutadapt][reverse_adapter]} -o "+output.R1[samp]+" -p "+output.R2[samp]+" {config[Cutadapt][options]} "+input.read[samp]+" "+input.read2[samp]+" > "+log[samp])
+rule rename:
+    input:
+        R1=expand(joins(config["Raw_Fastq"],"/{sample}_R1{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes),
+        R2=expand(joins(config["Raw_Fastq"],"/{sample}_R2{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes)
+    output:
+        R1=temp(expand(joins("renamed","/{sample}_R1.fastq.gz"),sample=sample_ids)),
+        R2=temp(expand(joins("renamed","/{sample}_R2.fastq.gz"),sample=sample_ids))
+    run:
+        for samp,e in enumerate(input.R1):
+            shell("ln -s ../"+input.R1[samp]+" "+output.R1[samp])
+            shell("ln -s ../"+input.R2[samp]+" "+output.R2[samp])
+            
 rule cutadapt:
     input:
-       read="data/Raw_reads/{sample}_R1_001.fastq.gz",
-       read2="data/Raw_reads/{sample}_R2_001.fastq.gz"
+        read=joins("renamed","/{sample}_R1{suff}fastq.gz"),
+        read2=joins("renamed","/{sample}_R2{suff}fastq.gz")
     output:
-        R1=temp("trimmed_reads/{sample}_R1_001.fastq.gz"),
-        R2=temp("trimmed_reads/{sample}_R2_001.fastq.gz") 
+        R1=temp("trimmed_reads/{sample}_R1{suff}fastq.gz"),
+        R2=temp("trimmed_reads/{sample}_R2{suff}fastq.gz")
     threads:
         50
     message:
@@ -119,10 +151,10 @@ rule samtools_faidx:
 #Raw mapping, with conversion to Bam file with samtools. 
 rule bwa_map:
     input:
-       genome=expand("{genome}", genome=config["genome"]),
-       bwt=expand("{genome}.bwt", genome=config["genome"]),
-       #read=expand("trimmed_reads/{{sample}}_{pair}_001.fastq.gz", pair=["R1", "R2"])
-       read=expand("trimmed_reads/{{sample}}_{pair}_001.fastq.gz", pair=["R1", "R2"]) if config["trimming"]!=0 else expand("data/Raw_reads/{{sample}}_{pair}_001.fastq.gz", pair=["R1", "R2"])
+        genome=expand("{genome}", genome=config["genome"]),
+        bwt=expand("{genome}.bwt", genome=config["genome"]),
+        #read=expand("trimmed_reads/{{sample}}_{pair}_001.fastq.gz", pair=["R1", "R2"])
+        read=expand("trimmed_reads/{{sample}}_{pair}.fastq.gz", pair=["R1", "R2"]) if config["trimming"]!=0 else expand("data/Raw_reads/{{sample}}_{pair}{{suff}}fastq.gz", pair=["R1", "R2"])
     output:
         temp("mapped_bam/{sample}.bam")
     log:
@@ -131,10 +163,9 @@ rule bwa_map:
         rg="@RG\\tID:{sample}\\tPL:ILLUMINA\\tSM:{sample}"
     message:
         "Raw mapping with {input.read}..."
-    benchmark:
-        "Benchmark/bwa/{sample}-bench.txt"
     shell:
         "bwa mem -t {config[BWA][t]} {config[BWA][options]} -R '{params.rg}' {input.genome} {input.read} 2> {log} | samtools view -Sb - > {output} "
+                                                    
 
 #Sorting reads with Picard. Will be the last step before variant calling if rmdup is set to false.
 rule picard_sort:
@@ -220,10 +251,10 @@ rule GATK_raw_calling:
     log:
         normal_log="logs/Raw_calling/logs/{sample}.log",
         error_log="logs/Raw_calling/error/{sample}.err"
+    params:
+        intervals="-L "+config[bed_file]+""  if config["bed_file"]!="" else ""    
     message:
         "Proceding raw GVCF calling on {input.bam}"
-    benchmark:
-        "Benchmark/Raw_calling/{sample}-bench.txt"
     shell:
         "java -Xmx4g -jar {config[software_reps][GATK]} "
         "-ploidy {config[GATK][ploidy]} "
@@ -231,7 +262,7 @@ rule GATK_raw_calling:
         "-T HaplotypeCaller "
         "-R {input.genome} "
         "-I {input.bam} "
-        "-L {config[bed_file]} "
+        "{params.intervals}"
         "--genotyping_mode DISCOVERY "
         "{config[GATK][option]}"
         "-o {output} "
