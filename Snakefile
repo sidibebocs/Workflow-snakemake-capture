@@ -33,7 +33,7 @@ rule calling_only:
 #Will only do the mapping step
 rule mapping_only:
     input:
-        bam=expand("rmduped_reads/{sample}.bam", sample=sample_ids) if config["remove_duplicates"]!=0 else expand("sorted_reads/{sample}.bam", sample=sample_ids),
+        bam=expand("cleaned_alignments/{sample}.bam" if config["clean_alignment"]!=0 else "rmduped_reads/{sample}.bam", sample=sample_ids) if config["remove_duplicates"]!=0 else expand("sorted_reads/{sample}.bam", sample=sample_ids),
         bai=expand("rmduped_reads/{sample}.bam.bai", sample=sample_ids) if config["remove_duplicates"]!=0 else expand("sorted_reads/{sample}.bam.bai", sample=sample_ids),
     message:
         "Mapping done"
@@ -73,38 +73,21 @@ onerror:
 
 #### Workflow
 
-#Trimming step, can be set to Off in the config file.
-#rule cutadapt:
-#    input:
-       #read=expand(joins(config["Raw_Fastq"],"/{sample}_R1{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes),
-       #read2=expand(joins(config["Raw_Fastq"],"/{sample}_R2{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes)
-#    output:
-#        R1=temp(expand("trimmed_reads/{sample}_R1{suff}fastq.gz",zip, sample=sample_ids,suff=suffixes)),
-#        R2=temp(expand("trimmed_reads/{sample}_R2{suff}fastq.gz",zip, sample=sample_ids,suff=suffixes))
-#    threads:
-#        50
-#    message:
-#        "Cutadapt on {input}..."
-#    priority:
-#        20
-#    log:
-#        expand("logs/trimming/{sample}.log", sample=sample_ids)
-#    run:
-#        for samp,e in enumerate(input.read):
-#            shell("cutadapt -q {config[Cutadapt][Quality_value]} -m {config[Cutadapt][min_length]} -a {config[Cutadapt][forward_adapter]} -A  {config[Cutadapt][reverse_adapter]} -o "+output.R1[samp]+" -p "+output.R2[samp]+" {config[Cutadapt][options]} "+input.read[samp]+" "+input.read2[samp]+" > "+log[samp])
+#Rename Create link to rename Raw_Fastq and basically remove everything after R1 or R2
 rule rename:
     input:
         R1=expand(joins(config["Raw_Fastq"],"/{sample}_R1{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes),
         R2=expand(joins(config["Raw_Fastq"],"/{sample}_R2{suff}fastq.gz"),zip,sample=sample_ids,suff=suffixes)
     output:
-        R1=temp(expand(joins("renamed","/{sample}_R1.fastq.gz"),sample=sample_ids)),
-        R2=temp(expand(joins("renamed","/{sample}_R2.fastq.gz"),sample=sample_ids))
+        R1=temp(expand(joins("renamed","{sample}_R1.fastq.gz"),sample=sample_ids)),
+        R2=temp(expand(joins("renamed","{sample}_R2.fastq.gz"),sample=sample_ids))
     run:
         for samp,e in enumerate(input.R1):
             shell("ln -s ../"+input.R1[samp]+" "+output.R1[samp])
             shell("ln -s ../"+input.R2[samp]+" "+output.R2[samp])
-            
-rule cutadapt:
+
+#Quality trimming of raw reads            
+rule read_cleaning:
     input:
         read=joins("renamed","/{sample}_R1{suff}fastq.gz"),
         read2=joins("renamed","/{sample}_R2{suff}fastq.gz")
@@ -154,7 +137,7 @@ rule bwa_map:
         genome=expand("{genome}", genome=config["genome"]),
         bwt=expand("{genome}.bwt", genome=config["genome"]),
         #read=expand("trimmed_reads/{{sample}}_{pair}_001.fastq.gz", pair=["R1", "R2"])
-        read=expand("trimmed_reads/{{sample}}_{pair}.fastq.gz", pair=["R1", "R2"]) if config["trimming"]!=0 else expand("data/Raw_reads/{{sample}}_{pair}{{suff}}fastq.gz", pair=["R1", "R2"])
+        read=expand("trimmed_reads/{{sample}}_{pair}.fastq.gz", pair=["R1", "R2"]) if config["trimming"]!=0 else expand("renamed/{{sample}}_{pair}.fastq.gz", pair=["R1", "R2"])
     output:
         temp("mapped_bam/{sample}.bam")
     log:
@@ -185,12 +168,21 @@ rule picard_sort:
         "VALIDATION_STRINGENCY=SILENT "
         "2> {log}"
 
+#Clean Alignment by keeping only primary alignment, properly paired and unique
+rule clean_alignment:
+    input:
+        bam="rmduped_reads/{sample}.bam" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam"
+    output:
+        temp("cleaned_alignments/{sample}.bam"),
+    shell:
+        "samtools view -b -F 0x100 -f 0x02 -q 1 {input.bam} >{output}"
+        
 #Remove duplicates from sorted reads. Can be diseable in the config file.
 rule picard_rmdup:
     input:
         bam="sorted_reads/{sample}.bam"
     output:
-        "rmduped_reads/{sample}.bam",
+        temp("rmduped_reads/{sample}.bam"),
     log:
         log1="logs/picard_rmdup/{sample}.log",
         log2="logs/picard_rmdup/{sample}.log2"
@@ -210,9 +202,9 @@ rule picard_rmdup:
 #Index the bam file. Will index the sorted reads or the rmduped reads depending if rmdup is enable or not.
 rule samtools_index:
     input:
-        "rmduped_reads/{sample}.bam" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam"
+        "{sample}.bam" 
     output:
-        "rmduped_reads/{sample}.bam.bai" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam.bai"
+        "{sample}.bam.bai"
     message:
         "Indexing {input}..."
     priority:
@@ -223,9 +215,9 @@ rule samtools_index:
 #Create genome dictionary with Picard
 rule picard_dict:
     input:
-        genome=expand("{genome_p}.fasta", genome_p=config["genome_prefix"])
+        genome=expand("{genome}", genome=config["genome"])
     output:
-        "{genome_p}.dict"
+        expand("{genome_p}.dict", genome_p=config["genome_prefix"])
     message:
         "Creating dictionary for {input}..."
     shell:
@@ -239,8 +231,8 @@ rule picard_dict:
 #VC - Step 1 : Create one gvcf file for each sample.
 rule GATK_raw_calling:
     input:
-        bam="rmduped_reads/{sample}.bam" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam",
-        bai="rmduped_reads/{sample}.bam.bai" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam.bai",
+        bam="cleaned_alignments/{sample}.bam" if config["clean_alignment"]!=0 else "rmduped_reads/{sample}.bam" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam",
+        bai="cleaned_alignments/{sample}.bam.bai" if config["clean_alignment"]!=0 else "rmduped_reads/{sample}.bam.bai" if config["remove_duplicates"]!=0 else "sorted_reads/{sample}.bam.bai",
         genome=expand("{genome}", genome=config["genome"]),
         dictionary=expand("{genome_p}.dict", genome_p=config["genome_prefix"]),
         index_genome=expand("{genome}.fai", genome=config["genome"])
